@@ -80,6 +80,13 @@ impl TabBar {
         );
         self
     }
+
+    pub fn zoom_button() -> IconButton {
+        IconButton::new("toggle_zoom", IconName::Maximize)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .selected_icon(IconName::Minimize)
+    }
 }
 
 impl ParentElement for TabBar {

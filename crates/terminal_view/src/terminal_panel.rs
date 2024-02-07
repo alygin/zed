@@ -13,7 +13,7 @@ use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
-use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
+use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, TabBar, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -82,10 +82,8 @@ impl TerminalPanel {
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
+                        TabBar::zoom_button()
                             .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))

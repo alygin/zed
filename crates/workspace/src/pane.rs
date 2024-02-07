@@ -319,11 +319,8 @@ impl Pane {
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
+                        TabBar::zoom_button()
                             .selected(zoomed)
-                            .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
                             }))
@@ -333,6 +330,26 @@ impl Pane {
                     })
                     .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
                         el.child(Self::render_menu_overlay(split_item_menu))
+                    })
+                    .child(
+                        IconButton::new("menu", IconName::Menu)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let menu = ContextMenu::build(cx, |menu, cx| {
+                                    Pane::add_close_actions(menu, cx, cx)
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
+                                    pane.focus(cx);
+                                    pane.tabs_menu = None;
+                                })
+                                .detach();
+                                pane.tabs_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("Tabs menu", cx)),
+                    )
+                    .when_some(pane.tabs_menu.as_ref(), |el, tabs_menu| {
+                        el.child(Self::render_menu_overlay(tabs_menu))
                     })
                     .into_any_element()
             }),
@@ -1421,23 +1438,8 @@ impl Pane {
                                     .detach_and_log_err(cx);
                             }),
                         )
-                        .separator()
-                        .entry(
-                            "Close Clean",
-                            Some(Box::new(CloseCleanItems)),
-                            cx.handler_for(&pane, move |pane, cx| {
-                                pane.close_clean_items(&CloseCleanItems, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
-                            }),
-                        )
-                        .entry(
-                            "Close All",
-                            Some(Box::new(CloseAllItems { save_intent: None })),
-                            cx.handler_for(&pane, |pane, cx| {
-                                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
-                                    .map(|task| task.detach_and_log_err(cx));
-                            }),
-                        );
+                        .separator();
+                    menu = Pane::add_close_actions(menu, &pane, cx);
 
                     if let Some(entry) = single_entry_to_resolve {
                         let entry_id = entry.to_proto();
@@ -1460,6 +1462,29 @@ impl Pane {
                 menu
             })
         })
+    }
+
+    fn add_close_actions(
+        menu: ContextMenu,
+        pane: &View<Pane>,
+        cx: &mut WindowContext,
+    ) -> ContextMenu {
+        menu.entry(
+            "Close Clean",
+            Some(Box::new(CloseCleanItems)),
+            pane.handler_for(pane, move |pane, cx| {
+                pane.close_clean_items(&CloseCleanItems, cx)
+                    .map(|task| task.detach_and_log_err(cx));
+            }),
+        )
+        .entry(
+            "Close All",
+            Some(Box::new(CloseAllItems { save_intent: None })),
+            cx.handler_for(&pane, |pane, cx| {
+                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+                    .map(|task| task.detach_and_log_err(cx));
+            }),
+        )
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {

@@ -1048,13 +1048,11 @@ impl AssistantPanel {
 
     fn render_zoom_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let zoomed = self.zoomed;
-        IconButton::new("zoom_button", IconName::Maximize)
+        TabBar::zoom_button()
+            .selected(zoomed)
             .on_click(cx.listener(|this, _event, cx| {
                 this.toggle_zoom(&ToggleZoom, cx);
             }))
-            .selected(zoomed)
-            .selected_icon(IconName::Minimize)
-            .icon_size(IconSize::Small)
             .tooltip(move |cx| {
                 Tooltip::for_action(if zoomed { "Zoom Out" } else { "Zoom In" }, &ToggleZoom, cx)
             })
