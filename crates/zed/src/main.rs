@@ -235,6 +235,7 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
+        item_finder::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);

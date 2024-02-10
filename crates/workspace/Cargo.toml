@@ -16,7 +16,7 @@ test-support = [
     "project/test-support",
     "settings/test-support",
     "gpui/test-support",
-    "fs/test-support"
+    "fs/test-support",
 ]
 
 [dependencies]

@@ -54,6 +54,7 @@ futures.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
 ignore = "0.4"
+item_finder = { path = "../item_finder" }
 image = "0.23"
 indexmap = "1.6.2"
 install_cli.workspace = true

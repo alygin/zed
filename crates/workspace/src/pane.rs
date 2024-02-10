@@ -84,7 +84,7 @@ impl_actions!(
         CloseAllItems,
         CloseActiveItem,
         ActivateItem,
-        RevealInProjectPanel
+        RevealInProjectPanel,
     ]
 );
 
@@ -102,6 +102,7 @@ actions!(
         DeploySearch,
         GoForward,
         ReopenClosedItem,
+        ShowOpenedItems,
         SplitLeft,
         SplitUp,
         SplitRight,
@@ -163,6 +164,7 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
+    tabs_menu: Option<View<ContextMenu>>,
     //     tab_context_menu: View<ContextMenu>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -265,6 +267,7 @@ impl Pane {
             toolbar: cx.new_view(|_| Toolbar::new()),
             new_item_menu: None,
             split_item_menu: None,
+            tabs_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -273,6 +276,7 @@ impl Pane {
             custom_drop_handle: None,
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                let pane_view = cx.view().clone();
                 h_flex()
                     .gap_2()
                     .child(
@@ -297,37 +301,37 @@ impl Pane {
                     .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
                         el.child(Self::render_menu_overlay(new_item_menu))
                     })
-                    .child(
-                        IconButton::new("split", IconName::Split)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.split_item_menu = None;
-                                })
-                                .detach();
-                                pane.split_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
-                    )
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        TabBar::zoom_button()
-                            .selected(zoomed)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                pane.toggle_zoom(&crate::ToggleZoom, cx);
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
-                            })
-                    })
+                    // .child(
+                    //     IconButton::new("split", IconName::Split)
+                    //         .icon_size(IconSize::Small)
+                    //         .icon_color(Color::Muted)
+                    //         .on_click(cx.listener(|pane, _, cx| {
+                    //             let menu = ContextMenu::build(cx, |menu, _| {
+                    //                 menu.action("Split Right", SplitRight.boxed_clone())
+                    //                     .action("Split Left", SplitLeft.boxed_clone())
+                    //                     .action("Split Up", SplitUp.boxed_clone())
+                    //                     .action("Split Down", SplitDown.boxed_clone())
+                    //             });
+                    //             cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
+                    //                 pane.focus(cx);
+                    //                 pane.split_item_menu = None;
+                    //             })
+                    //             .detach();
+                    //             pane.split_item_menu = Some(menu);
+                    //         }))
+                    //         .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                    // )
+                    // .child({
+                    //     let zoomed = pane.is_zoomed();
+                    //     TabBar::zoom_button()
+                    //         .selected(zoomed)
+                    //         .on_click(cx.listener(|pane, _, cx| {
+                    //             pane.toggle_zoom(&crate::ToggleZoom, cx);
+                    //         }))
+                    //         .tooltip(move |cx| {
+                    //             Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                    //         })
+                    // })
                     .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
                         el.child(Self::render_menu_overlay(split_item_menu))
                     })
@@ -335,9 +339,35 @@ impl Pane {
                         IconButton::new("menu", IconName::Menu)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
-                            .on_click(cx.listener(|pane, _, cx| {
+                            .on_click(cx.listener(move |pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    Pane::add_close_actions(menu, cx, cx)
+                                    let m_menu = menu
+                                        .entry(
+                                            "Tab Switcher",
+                                            Some(Box::new(ShowOpenedItems)),
+                                            cx.handler_for(&pane_view, move |pane, cx| {
+                                                pane.show_opened_tabs(&ShowOpenedItems, cx)
+                                                    .map(|task| task.detach_and_log_err(cx));
+                                            }),
+                                        )
+                                        .separator();
+                                    let mut m_menu =
+                                        Pane::add_close_actions(m_menu, pane_view.clone(), cx);
+                                    m_menu
+                                        .separator()
+                                        .action("Split Right", SplitRight.boxed_clone())
+                                        .action("Split Left", SplitLeft.boxed_clone())
+                                        .action("Split Up", SplitUp.boxed_clone())
+                                        .action("Split Down", SplitDown.boxed_clone())
+                                        .separator()
+                                        .entry(
+                                            "Zoom In",
+                                            Some(Box::new(ShowOpenedItems)),
+                                            cx.handler_for(&pane_view, move |pane, cx| {
+                                                pane.show_opened_tabs(&ShowOpenedItems, cx)
+                                                    .map(|task| task.detach_and_log_err(cx));
+                                            }),
+                                        )
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
                                     pane.focus(cx);
@@ -796,6 +826,14 @@ impl Pane {
         Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
             item_id != active_item_id
         }))
+    }
+
+    pub fn show_opened_tabs(
+        &self,
+        _: &ShowOpenedItems,
+        _cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        Some(Task::ready(Ok(())))
     }
 
     pub fn close_clean_items(
@@ -1439,7 +1477,7 @@ impl Pane {
                             }),
                         )
                         .separator();
-                    menu = Pane::add_close_actions(menu, &pane, cx);
+                    menu = Pane::add_close_actions(menu, pane.clone(), cx);
 
                     if let Some(entry) = single_entry_to_resolve {
                         let entry_id = entry.to_proto();
@@ -1466,13 +1504,13 @@ impl Pane {
 
     fn add_close_actions(
         menu: ContextMenu,
-        pane: &View<Pane>,
+        pane: View<Pane>,
         cx: &mut WindowContext,
     ) -> ContextMenu {
         menu.entry(
             "Close Clean",
             Some(Box::new(CloseCleanItems)),
-            pane.handler_for(pane, move |pane, cx| {
+            cx.handler_for(&pane, move |pane, cx| {
                 pane.close_clean_items(&CloseCleanItems, cx)
                     .map(|task| task.detach_and_log_err(cx));
             }),
