@@ -80,10 +80,29 @@ pub(crate) struct DispatchTree {
 pub(crate) struct DispatchNode {
     pub key_listeners: Vec<KeyListener>,
     pub action_listeners: Vec<DispatchActionListener>,
+    pub action_release_listeners: Vec<DispatchActionListener>,
     pub context: Option<KeyContext>,
     focus_id: Option<FocusId>,
     view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum ActionPhase {
+    /// Action executed on key down.
+    Execute,
+
+    /// All modifier keys are released right after the action execution.
+    Release,
+}
+
+impl DispatchNode {
+    pub fn action_listeners_for_phase(&self, phase: ActionPhase) -> &Vec<DispatchActionListener> {
+        match phase {
+            ActionPhase::Execute => &self.action_listeners,
+            ActionPhase::Release => &self.action_release_listeners,
+        }
+    }
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut ElementContext)>;
@@ -160,6 +179,7 @@ impl DispatchTree {
         let target = self.active_node();
         target.key_listeners = mem::take(&mut source.key_listeners);
         target.action_listeners = mem::take(&mut source.action_listeners);
+        target.action_release_listeners = mem::take(&mut source.action_release_listeners);
     }
 
     pub fn reuse_view(&mut self, view_id: EntityId, source: &mut Self) -> SmallVec<[EntityId; 8]> {
@@ -245,6 +265,19 @@ impl DispatchTree {
     ) {
         self.active_node()
             .action_listeners
+            .push(DispatchActionListener {
+                action_type,
+                listener,
+            });
+    }
+
+    pub fn on_action_release(
+        &mut self,
+        action_type: TypeId,
+        listener: Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>,
+    ) {
+        self.active_node()
+            .action_release_listeners
             .push(DispatchActionListener {
                 action_type,
                 listener,

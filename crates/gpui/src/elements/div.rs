@@ -340,6 +340,25 @@ impl Interactivity {
         ));
     }
 
+    /// Bind the given callback to an action release dispatch during the bubble phase
+    /// The imperative API equivalent to [`InteractiveElement::on_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn on_action_release<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) {
+        self.action_release_listeners.push((
+            TypeId::of::<A>(),
+            Box::new(move |action, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == DispatchPhase::Bubble {
+                    (listener)(action, cx)
+                }
+            }),
+        ));
+    }
+
     /// Bind the given callback to key down events during the bubble phase
     /// The imperative API equivalent to [`InteractiveElement::on_key_down`]
     ///
@@ -718,6 +737,18 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) -> Self {
         self.interactivity().on_action(listener);
+        self
+    }
+
+    /// Bind the given callback to an action release dispatch during the bubble phase
+    /// The fluent API equivalent to [`Interactivity::on_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_action_release<A: Action>(
+        mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().on_action_release(listener);
         self
     }
 
@@ -1196,6 +1227,7 @@ pub struct Interactivity {
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) action_listeners: Vec<(TypeId, ActionListener)>,
+    pub(crate) action_release_listeners: Vec<(TypeId, ActionListener)>,
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
@@ -1892,6 +1924,8 @@ impl Interactivity {
                         let key_down_listeners = mem::take(&mut self.key_down_listeners);
                         let key_up_listeners = mem::take(&mut self.key_up_listeners);
                         let action_listeners = mem::take(&mut self.action_listeners);
+                        let action_release_listeners =
+                            mem::take(&mut self.action_release_listeners);
                         cx.with_key_dispatch(
                             self.key_context.clone(),
                             element_state.focus_handle.clone(),
@@ -1910,6 +1944,10 @@ impl Interactivity {
 
                                 for (action_type, listener) in action_listeners {
                                     cx.on_action(action_type, listener)
+                                }
+
+                                for (action_type, listener) in action_release_listeners {
+                                    cx.on_action_release(action_type, listener)
                                 }
 
                                 f(&style, scroll_offset.unwrap_or_default(), cx)

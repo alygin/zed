@@ -1,13 +1,13 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    px, size, transparent_black, Action, ActionPhase, AnyDrag, AnyView, AppContext, Arena,
+    AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId, Hsla, KeyBinding,
+    KeyContext, KeyDownEvent, KeyMatch, KeymatchResult, Keystroke, KeystrokeEvent, Model,
+    ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
+    Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task,
+    View, VisualContext, WeakView, WindowAppearance, WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -280,6 +280,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_action_releases: Option<SmallVec<[Box<dyn Action>; 1]>>,
 }
 
 #[derive(Default, Debug)]
@@ -473,6 +474,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_action_releases: None,
         }
     }
     fn new_focus_listener(
@@ -602,7 +604,7 @@ impl<'a> WindowContext<'a> {
                 .unwrap_or_else(|| cx.window.rendered_frame.dispatch_tree.root_node_id());
 
             cx.propagate_event = true;
-            cx.dispatch_action_on_node(node_id, action);
+            cx.dispatch_action_on_node(node_id, action, ActionPhase::Execute);
         })
     }
 
@@ -1305,7 +1307,20 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+        if let Some(modifiers_changed_events) = event.downcast_ref::<ModifiersChangedEvent>() {
+            if !modifiers_changed_events.modified() {
+                if let Some(actions) = self.window.pending_action_releases.take() {
+                    self.propagate_event = true;
+                    for action in actions {
+                        self.dispatch_action_on_node(node_id, action, ActionPhase::Release);
+                        if !self.propagate_event {
+                            return;
+                        }
+                    }
+                }
+            }
+            self.window.pending_action_releases = None;
+        } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
@@ -1341,7 +1356,9 @@ impl<'a> WindowContext<'a> {
 
                 self.propagate_event = false;
                 return;
-            } else if let Some(currently_pending) = self.window.pending_input.take() {
+            }
+
+            if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -1350,13 +1367,25 @@ impl<'a> WindowContext<'a> {
                 }
             }
 
+            self.window.pending_action_releases = None;
             if !bindings.is_empty() {
                 self.clear_pending_keystrokes();
+                if key_down_event.keystroke.modifiers.modified() {
+                    let mut actions = SmallVec::with_capacity(bindings.len());
+                    for binding in &bindings {
+                        actions.push(binding.action.boxed_clone());
+                    }
+                    self.window.pending_action_releases = Some(actions);
+                }
             }
 
             self.propagate_event = true;
             for binding in bindings {
-                self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+                self.dispatch_action_on_node(
+                    node_id,
+                    binding.action.boxed_clone(),
+                    ActionPhase::Execute,
+                );
                 if !self.propagate_event {
                     self.dispatch_keystroke_observers(event, Some(binding.action));
                     return;
@@ -1434,7 +1463,11 @@ impl<'a> WindowContext<'a> {
 
         self.propagate_event = true;
         for binding in currently_pending.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.boxed_clone());
+            self.dispatch_action_on_node(
+                node_id,
+                binding.action.boxed_clone(),
+                ActionPhase::Execute,
+            );
             if !self.propagate_event {
                 return;
             }
@@ -1466,7 +1499,12 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    fn dispatch_action_on_node(&mut self, node_id: DispatchNodeId, action: Box<dyn Action>) {
+    fn dispatch_action_on_node(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: Box<dyn Action>,
+        action_phase: ActionPhase,
+    ) {
         let dispatch_path = self
             .window
             .rendered_frame
@@ -1479,7 +1517,7 @@ impl<'a> WindowContext<'a> {
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in node.action_listeners.clone()
+            } in node.action_listeners_for_phase(action_phase).clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
@@ -1499,7 +1537,7 @@ impl<'a> WindowContext<'a> {
             for DispatchActionListener {
                 action_type,
                 listener,
-            } in node.action_listeners.clone()
+            } in node.action_listeners_for_phase(action_phase).clone()
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
@@ -1668,6 +1706,23 @@ impl<'a> WindowContext<'a> {
             .next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+
+    /// Register an action release listener on the window for the next frame. The type of action
+    /// is determined by the first parameter of the given listener. When the next frame is rendered
+    /// the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action_release(
+        &mut self,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut WindowContext) + 'static,
+    ) {
+        self.window
+            .next_frame
+            .dispatch_tree
+            .on_action_release(action_type, Rc::new(listener));
     }
 }
 
