@@ -2,10 +2,10 @@ use super::{global_bounds_from_ns_rect, ns_string, renderer, MacDisplay, NSRange
 use crate::{
     global_bounds_to_ns_rect, platform::PlatformInputHandler, point, px, size, AnyWindowHandle,
     Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, GlobalPixels,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
-    WindowOptions,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBounds,
+    WindowKind, WindowOptions,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -334,7 +334,8 @@ struct MacWindowState {
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
-    last_key_equivalent: Option<KeyDownEvent>,
+    last_key_down_equivalent: Option<KeyDownEvent>,
+    last_key_up_equivalent: Option<KeyUpEvent>,
     synthetic_drag_counter: usize,
     last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
@@ -586,7 +587,8 @@ impl MacWindow {
                 close_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
-                last_key_equivalent: None,
+                last_key_down_equivalent: None,
+                last_key_up_equivalent: None,
                 synthetic_drag_counter: 0,
                 last_fresh_keydown: None,
                 traffic_light_position: options
@@ -1156,10 +1158,16 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 }
 
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
+    println!("native handle_key_eq()");
     handle_key_event(this, native_event, true)
 }
 
 extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
+    println!("native handle_key_down()");
+    handle_key_event(this, native_event, false);
+}
+
+extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
     handle_key_event(this, native_event, false);
 }
 
@@ -1173,6 +1181,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
+    println!("native handle_key_event()");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
 
@@ -1184,9 +1193,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         // If that event isn't handled, it will then dispatch a "key down" event. GPUI
         // makes no distinction between these two types of events, so we need to ignore
         // the "key down" event if we've already just processed its "key equivalent" version.
+        lock.last_key_up_equivalent.take();
         if key_equivalent {
-            lock.last_key_equivalent = Some(event.clone());
-        } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
+            lock.last_key_down_equivalent = Some(event.clone());
+        } else if lock.last_key_down_equivalent.take().as_ref() == Some(&event) {
             return NO;
         }
 
@@ -1272,6 +1282,27 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         }
 
         window_state.lock().event_callback = callback;
+
+        handled as BOOL
+    } else if let Some(PlatformInput::KeyUp(event)) = event {
+        println!("platform key up");
+        lock.last_key_down_equivalent.take();
+        // if key_equivalent {
+        //     lock.last_key_up_equivalent = Some(event.clone());
+        // } else if lock.last_key_up_equivalent.take().as_ref() == Some(&event) {
+        //     return NO;
+        // }
+
+        let mut lock = window_state.lock();
+        let mut callback = lock.event_callback.take();
+        drop(lock);
+
+        let handled = if let Some(callback) = callback.as_mut() {
+            println!("platform key up > callback");
+            callback(PlatformInput::KeyUp(event))
+        } else {
+            false
+        };
 
         handled as BOOL
     } else {
@@ -1363,6 +1394,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             }
 
             PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
+                println!("platform mod.changed");
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,

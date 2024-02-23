@@ -340,6 +340,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .flex_none()
             .h_9()
             .px_4()
+            .on_key_up(|_, _| println!("pe key up"))
+            .capture_key_up(|_, _| println!("pe capture up"))
             .child(self.editor.clone());
 
         div()
@@ -359,6 +361,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::secondary_confirm))
+            .on_key_up(|_, _| println!("p key up"))
+            .capture_key_up(|_, _| println!("p capture up"))
             .child(picker_editor)
             .child(Divider::horizontal())
             .when(self.delegate.match_count() > 0, |el| {

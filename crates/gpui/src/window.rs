@@ -1,13 +1,13 @@
 use crate::{
-    px, size, transparent_black, Action, AnyDrag, AnyView, AppContext, Arena, AsyncWindowContext,
-    AvailableSpace, Bounds, Context, Corners, CursorStyle, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, Flatten,
-    Global, GlobalElementId, Hsla, KeyBinding, KeyContext, KeyDownEvent, KeyMatch, KeymatchResult,
-    Keystroke, KeystrokeEvent, Model, ModelContext, Modifiers, MouseButton, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point,
-    PromptLevel, Render, ScaledPixels, SharedString, Size, SubscriberSet, Subscription,
-    TaffyLayoutEngine, Task, View, VisualContext, WeakView, WindowAppearance, WindowBounds,
-    WindowOptions, WindowTextSystem,
+    interactive::map_keystroke, px, size, transparent_black, Action, AnyDrag, AnyView, AppContext,
+    Arena, AsyncWindowContext, AvailableSpace, Bounds, Context, Corners, CursorStyle,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, Global, GlobalElementId, Hsla, KeyBinding,
+    KeyContext, KeyMatch, KeyUpEvent, KeymatchResult, Keystroke, KeystrokeEvent, Model,
+    ModelContext, Modifiers, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Render, ScaledPixels,
+    SharedString, Size, SubscriberSet, Subscription, TaffyLayoutEngine, Task, View, VisualContext,
+    WeakView, WindowAppearance, WindowBounds, WindowOptions, WindowTextSystem,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::FxHashSet;
@@ -613,16 +613,16 @@ impl<'a> WindowContext<'a> {
         event: &dyn Any,
         action: Option<Box<dyn Action>>,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+        println!("dispatch_keystroke_observers()");
+        let Some(keystroke) = map_keystroke(event) else {
             return;
         };
-
         self.keystroke_observers
             .clone()
             .retain(&(), move |callback| {
                 (callback)(
                     &KeystrokeEvent {
-                        keystroke: key_down_event.keystroke.clone(),
+                        keystroke: keystroke.clone(),
                         action: action.as_ref().map(|action| action.boxed_clone()),
                     },
                     self,
@@ -1106,7 +1106,6 @@ impl<'a> WindowContext<'a> {
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
         self.window.default_prevented = false;
-
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
@@ -1247,10 +1246,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any) {
+        println!("dispatching key event...");
         if self.window.dirty.get() {
             self.draw();
         }
-
         let node_id = self
             .window
             .focus
@@ -1268,12 +1267,12 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
+        if let Some(keystroke) = map_keystroke(event) {
             let KeymatchResult { bindings, pending } = self
                 .window
                 .rendered_frame
                 .dispatch_tree
-                .dispatch_key(&key_down_event.keystroke, &dispatch_path);
+                .dispatch_key(&keystroke, &dispatch_path);
 
             if pending {
                 let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
@@ -1282,9 +1281,7 @@ impl<'a> WindowContext<'a> {
                     currently_pending = PendingInput::default();
                 }
                 currently_pending.focus = self.window.focus;
-                currently_pending
-                    .keystrokes
-                    .push(key_down_event.keystroke.clone());
+                currently_pending.keystrokes.push(keystroke.clone());
                 for binding in bindings {
                     currently_pending.bindings.push(binding);
                 }
@@ -1304,7 +1301,9 @@ impl<'a> WindowContext<'a> {
 
                 self.propagate_event = false;
                 return;
-            } else if let Some(currently_pending) = self.window.pending_input.take() {
+            }
+
+            if let Some(currently_pending) = self.window.pending_input.take() {
                 if bindings
                     .iter()
                     .all(|binding| !currently_pending.used_by_binding(binding))
@@ -1326,11 +1325,14 @@ impl<'a> WindowContext<'a> {
                 }
             }
         }
+        println!("dke 11");
 
         self.dispatch_key_down_up_event(event, &dispatch_path);
+        println!("dke 12");
         if !self.propagate_event {
             return;
         }
+        println!("dke 13");
 
         self.dispatch_keystroke_observers(event, None);
     }
@@ -1340,6 +1342,7 @@ impl<'a> WindowContext<'a> {
         event: &dyn Any,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) {
+        println!("dispatch_key_down_up_event()");
         // Capture phase
         for node_id in dispatch_path {
             let node = self.window.rendered_frame.dispatch_tree.node(*node_id);
@@ -1410,10 +1413,7 @@ impl<'a> WindowContext<'a> {
             .dispatch_path(node_id);
 
         for keystroke in currently_pending.keystrokes {
-            let event = KeyDownEvent {
-                keystroke,
-                is_held: false,
-            };
+            let event = KeyUpEvent { keystroke };
 
             self.dispatch_key_down_up_event(&event, &dispatch_path);
             if !self.propagate_event {
