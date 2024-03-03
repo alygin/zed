@@ -438,31 +438,43 @@ impl PlatformInput {
 mod test {
     use crate::{
         self as gpui, div, Element, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ParentElement, Render, TestAppContext, VisualContext,
+        KeyDownEvent, Keystroke, Modifiers, ParentElement, Render, TestAppContext, VisualContext,
+        WindowHandle,
     };
 
     struct TestView {
-        saw_key_down: bool,
-        saw_action: bool,
+        events_history: Vec<String>,
         focus_handle: FocusHandle,
     }
 
-    actions!(test, [TestAction]);
+    actions!(test, [TestActionG, TestActionQ]);
 
     impl Render for TestView {
         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl Element {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.listener(|this, _, cx| {
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, cx| {
                         cx.stop_propagation();
-                        this.saw_key_down = true
+                        this.events_history
+                            .push(format!("on_key_down({})", event.keystroke.key))
                     }))
-                    .on_action(
-                        cx.listener(|this: &mut TestView, _: &TestAction, _| {
-                            this.saw_action = true
-                        }),
-                    )
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestActionG, _| {
+                        this.events_history
+                            .push("on_action(TestActionG)".to_string())
+                    }))
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestActionQ, _| {
+                        this.events_history
+                            .push("on_action(TestActionQ)".to_string())
+                    }))
+                    .on_action_release(cx.listener(|this: &mut TestView, _: &TestActionG, _| {
+                        this.events_history
+                            .push("on_action_release(TestActionG)".to_string())
+                    }))
+                    .on_action_release(cx.listener(|this: &mut TestView, _: &TestActionQ, _| {
+                        this.events_history
+                            .push("on_action_release(TestActionQ)".to_string())
+                    }))
                     .child(
                         div()
                             .key_context("nested")
@@ -475,33 +487,151 @@ mod test {
 
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::default());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec![
+                        "on_key_down(a)",
+                        "on_action(TestActionG)",
+                        "on_action_release(TestActionG)"
+                    ]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_action_release_skipping(cx: &mut TestAppContext) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::default());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec!["on_action(TestActionG)", "on_key_down(a)",]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_action_release_after_repeating_actions(cx: &mut TestAppContext) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("cmd-shift-q").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("cmd-shift-q").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("cmd-shift-q").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::default());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec![
+                        "on_action(TestActionQ)",
+                        "on_action(TestActionQ)",
+                        "on_action(TestActionQ)",
+                        "on_action_release(TestActionQ)",
+                    ]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_action_release_on_gradual_switching_to_other_sequential_action(
+        cx: &mut TestAppContext,
+    ) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("cmd-shift-q").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::control());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::default());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec![
+                        "on_action(TestActionQ)",
+                        "on_action_release(TestActionQ)",
+                        "on_action(TestActionG)",
+                        "on_action_release(TestActionG)",
+                    ]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_action_release_on_gradual_modifiers_changes(cx: &mut TestAppContext) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("cmd-shift-q").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::command());
+        cx.dispatch_modifiers_changed(*window, Modifiers::shift());
+        cx.dispatch_modifiers_changed(*window, Modifiers::default());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec!["on_action(TestActionQ)", "on_action_release(TestActionQ)",]
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_action_release_on_action_modifiers_release(cx: &mut TestAppContext) {
+        let window = init_test(cx);
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_modifiers_changed(*window, Modifiers::command());
+
+        window
+            .update(cx, |test_view, _| {
+                assert_eq!(
+                    test_view.events_history,
+                    vec!["on_action(TestActionG)", "on_action_release(TestActionG)",]
+                );
+            })
+            .unwrap();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> WindowHandle<TestView> {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |cx| {
                 cx.new_view(|cx| TestView {
-                    saw_key_down: false,
-                    saw_action: false,
+                    events_history: Vec::new(),
                     focus_handle: cx.focus_handle(),
                 })
             })
         });
 
         cx.update(|cx| {
-            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
+            cx.bind_keys(vec![
+                KeyBinding::new("ctrl-g", TestActionG, Some("parent")),
+                KeyBinding::new("cmd-shift-q", TestActionQ, Some("parent")),
+            ]);
         });
 
         window
             .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
-
         window
-            .update(cx, |test_view, _| {
-                assert!(test_view.saw_key_down || test_view.saw_action);
-                assert!(test_view.saw_key_down);
-                assert!(test_view.saw_action);
-            })
-            .unwrap();
     }
 }

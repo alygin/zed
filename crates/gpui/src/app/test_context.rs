@@ -359,6 +359,12 @@ impl TestAppContext {
             .unwrap();
     }
 
+    /// dispatches a modifiers changed event
+    pub fn dispatch_modifiers_changed(&mut self, window: AnyWindowHandle, modifiers: Modifiers) {
+        self.update_window(window, |_, cx| cx.dispatch_modifiers_changed(modifiers))
+            .unwrap();
+    }
+
     /// Returns the `TestWindow` backing the given handle.
     pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
         self.app

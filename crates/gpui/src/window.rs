@@ -280,7 +280,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
-    pending_action_releases: Option<SmallVec<[Box<dyn Action>; 1]>>,
+    pending_action_releases: Option<PendingActionReleases>,
 }
 
 #[derive(Default, Debug)]
@@ -312,6 +312,11 @@ impl PendingInput {
         }
         false
     }
+}
+
+struct PendingActionReleases {
+    actions: SmallVec<[Box<dyn Action>; 1]>,
+    modifiers: Modifiers,
 }
 
 pub(crate) struct ElementStateBox {
@@ -1121,6 +1126,13 @@ impl<'a> WindowContext<'a> {
         false
     }
 
+    /// Dispatch a modifiers change as though the user did it.
+    pub fn dispatch_modifiers_changed(&mut self, modifiers: Modifiers) -> bool {
+        self.dispatch_event(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+            modifiers,
+        }))
+    }
+
     /// Represent this action as a key binding string, to display in the UI.
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
@@ -1307,19 +1319,8 @@ impl<'a> WindowContext<'a> {
             .dispatch_tree
             .dispatch_path(node_id);
 
-        if let Some(modifiers_changed_events) = event.downcast_ref::<ModifiersChangedEvent>() {
-            if !modifiers_changed_events.modified() {
-                if let Some(actions) = self.window.pending_action_releases.take() {
-                    self.propagate_event = true;
-                    for action in actions {
-                        self.dispatch_action_on_node(node_id, action, ActionPhase::Release);
-                        if !self.propagate_event {
-                            return;
-                        }
-                    }
-                }
-            }
-            self.window.pending_action_releases = None;
+        if let Some(modifiers_changed_event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            self.process_changed_modifiers(node_id, modifiers_changed_event.modifiers);
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             let KeymatchResult { bindings, pending } = self
                 .window
@@ -1375,7 +1376,10 @@ impl<'a> WindowContext<'a> {
                     for binding in &bindings {
                         actions.push(binding.action.boxed_clone());
                     }
-                    self.window.pending_action_releases = Some(actions);
+                    self.window.pending_action_releases = Some(PendingActionReleases {
+                        actions,
+                        modifiers: key_down_event.keystroke.modifiers,
+                    });
                 }
             }
 
@@ -1399,6 +1403,25 @@ impl<'a> WindowContext<'a> {
         }
 
         self.dispatch_keystroke_observers(event, None);
+    }
+
+    fn process_changed_modifiers(&mut self, node_id: DispatchNodeId, modifiers: Modifiers) {
+        let Some(pending_action_releases) = self.window.pending_action_releases.take() else {
+            return;
+        };
+        if modifiers.modified() && modifiers.is_subset_of(&pending_action_releases.modifiers) {
+            // User still holds some of the action shortcut modifiers
+            self.window.pending_action_releases = Some(pending_action_releases);
+            return;
+        }
+        // All the action shortcut modifiers released
+        self.propagate_event = true;
+        for action in pending_action_releases.actions {
+            self.dispatch_action_on_node(node_id, action, ActionPhase::Release);
+            if !self.propagate_event {
+                return;
+            }
+        }
     }
 
     fn dispatch_key_down_up_event(

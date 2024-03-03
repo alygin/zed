@@ -213,6 +213,14 @@ impl Modifiers {
         }
     }
 
+    /// helper method for Modifiers with just control
+    pub fn control() -> Modifiers {
+        Modifiers {
+            control: true,
+            ..Default::default()
+        }
+    }
+
     /// helper method for Modifiers with just shift
     pub fn shift() -> Modifiers {
         Modifiers {
@@ -228,5 +236,57 @@ impl Modifiers {
             command: true,
             ..Default::default()
         }
+    }
+
+    /// Checks if this Modifiers is a subset of another Modifiers
+    pub fn is_subset_of(&self, other: &Modifiers) -> bool {
+        (other.control || !self.control)
+            && (other.alt || !self.alt)
+            && (other.shift || !self.shift)
+            && (other.command || !self.command)
+            && (other.function || !self.function)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_is_subset_of() {
+        assert!(Modifiers::command().is_subset_of(&Modifiers::command_shift()));
+        assert!(Modifiers::shift().is_subset_of(&Modifiers::command_shift()));
+        assert!(Modifiers::default().is_subset_of(&Modifiers::command_shift()));
+        assert!(Modifiers::command_shift().is_subset_of(&Modifiers::command_shift()));
+        assert!(Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        }
+        .is_subset_of(&Modifiers {
+            command: true,
+            alt: true,
+            shift: true,
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn test_is_not_subset_of() {
+        assert!(!Modifiers::command_shift().is_subset_of(&Modifiers::command()));
+        assert!(!Modifiers::control().is_subset_of(&Modifiers::command_shift()));
+        assert!(!Modifiers::shift().is_subset_of(&Modifiers::default()));
+        assert!(!Modifiers::command().is_subset_of(&Modifiers::control()));
+        assert!(!Modifiers {
+            command: true,
+            alt: true,
+            shift: true,
+            ..Default::default()
+        }
+        .is_subset_of(&Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        }))
     }
 }
