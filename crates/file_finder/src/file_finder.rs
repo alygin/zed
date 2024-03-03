@@ -5,8 +5,8 @@ use collections::{HashMap, HashSet};
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    actions, rems, Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    Model, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
@@ -49,6 +49,12 @@ impl FileFinder {
                     .picker
                     .update(cx, |picker, cx| picker.cycle_selection(cx))
             });
+        });
+
+        workspace.register_action_release(|workspace, _: &Toggle, cx| {
+            if workspace.active_modal::<Self>(cx).is_some() {
+                cx.dispatch_action(menu::Confirm.boxed_clone());
+            };
         });
     }
 
