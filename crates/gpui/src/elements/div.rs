@@ -291,15 +291,7 @@ impl Interactivity {
         &mut self,
         listener: impl Fn(&A, &mut WindowContext) + 'static,
     ) {
-        self.action_listeners.push((
-            TypeId::of::<A>(),
-            Box::new(move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Capture {
-                    (listener)(action, cx)
-                }
-            }),
-        ));
+        Self::add_action_listener(&mut self.action_listeners, listener, DispatchPhase::Capture);
     }
 
     /// Bind the given callback to an action dispatch during the bubble phase
@@ -307,15 +299,7 @@ impl Interactivity {
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut WindowContext) + 'static) {
-        self.action_listeners.push((
-            TypeId::of::<A>(),
-            Box::new(move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Bubble {
-                    (listener)(action, cx)
-                }
-            }),
-        ));
+        Self::add_action_listener(&mut self.action_listeners, listener, DispatchPhase::Bubble);
     }
 
     /// Bind the given callback to an action dispatch, based on a dynamic action parameter
@@ -329,15 +313,22 @@ impl Interactivity {
         action: &dyn Action,
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) {
-        let action = action.boxed_clone();
-        self.action_listeners.push((
-            (*action).type_id(),
-            Box::new(move |_, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    (listener)(&action, cx)
-                }
-            }),
-        ));
+        Self::add_boxed_action_listener(&mut self.action_listeners, action, listener);
+    }
+
+    /// Bind the given callback to an action release dispatch during the capture phase
+    /// The imperative API equivalent to [`InteractiveElement::capture_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn capture_action_release<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) {
+        Self::add_action_listener(
+            &mut self.action_release_listeners,
+            listener,
+            DispatchPhase::Capture,
+        );
     }
 
     /// Bind the given callback to an action release dispatch during the bubble phase
@@ -348,15 +339,25 @@ impl Interactivity {
         &mut self,
         listener: impl Fn(&A, &mut WindowContext) + 'static,
     ) {
-        self.action_release_listeners.push((
-            TypeId::of::<A>(),
-            Box::new(move |action, phase, cx| {
-                let action = action.downcast_ref().unwrap();
-                if phase == DispatchPhase::Bubble {
-                    (listener)(action, cx)
-                }
-            }),
-        ));
+        Self::add_action_listener(
+            &mut self.action_release_listeners,
+            listener,
+            DispatchPhase::Bubble,
+        );
+    }
+
+    /// Bind the given callback to an action release dispatch, based on a dynamic action parameter
+    /// instead of a type parameter. Useful for component libraries that want to expose
+    /// action bindings to their users.
+    /// The imperative API equivalent to [`InteractiveElement::on_boxed_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    pub fn on_boxed_action_release(
+        &mut self,
+        action: &dyn Action,
+        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+    ) {
+        Self::add_boxed_action_listener(&mut self.action_release_listeners, action, listener);
     }
 
     /// Bind the given callback to key down events during the bubble phase
@@ -503,6 +504,38 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::block_mouse`]
     pub fn block_mouse(&mut self) {
         self.block_mouse = true;
+    }
+
+    fn add_action_listener<A: Action>(
+        action_listeners: &mut Vec<(TypeId, ActionListener)>,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+        dispatch_phase: DispatchPhase,
+    ) {
+        action_listeners.push((
+            TypeId::of::<A>(),
+            Box::new(move |action, phase, cx| {
+                let action = action.downcast_ref().unwrap();
+                if phase == dispatch_phase {
+                    (listener)(action, cx)
+                }
+            }),
+        ));
+    }
+
+    fn add_boxed_action_listener(
+        action_listeners: &mut Vec<(TypeId, ActionListener)>,
+        action: &dyn Action,
+        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+    ) {
+        let action = action.boxed_clone();
+        action_listeners.push((
+            (*action).type_id(),
+            Box::new(move |_, phase, cx| {
+                if phase == DispatchPhase::Bubble {
+                    (listener)(&action, cx)
+                }
+            }),
+        ));
     }
 }
 
@@ -720,7 +753,7 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Capture the given action, before normal action dispatch can fire
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`]
+    /// The fluent API equivalent to [`Interactivity::capture_action`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_action<A: Action>(
@@ -740,18 +773,6 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to an action release dispatch during the bubble phase
-    /// The fluent API equivalent to [`Interactivity::on_action_release`]
-    ///
-    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    fn on_action_release<A: Action>(
-        mut self,
-        listener: impl Fn(&A, &mut WindowContext) + 'static,
-    ) -> Self {
-        self.interactivity().on_action_release(listener);
-        self
-    }
-
     /// Bind the given callback to an action dispatch, based on a dynamic action parameter
     /// instead of a type parameter. Useful for component libraries that want to expose
     /// action bindings to their users.
@@ -764,6 +785,46 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
+        self
+    }
+
+    /// Capture the given action release, before normal action release dispatch can fire
+    /// The fluent API equivalent to [`Interactivity::capture_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn capture_action_release<A: Action>(
+        mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().capture_action_release(listener);
+        self
+    }
+
+    /// Bind the given callback to an action release dispatch during the bubble phase
+    /// The fluent API equivalent to [`Interactivity::on_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_action_release<A: Action>(
+        mut self,
+        listener: impl Fn(&A, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity().on_action_release(listener);
+        self
+    }
+
+    /// Bind the given callback to an action release dispatch, based on a dynamic action parameter
+    /// instead of a type parameter. Useful for component libraries that want to expose
+    /// action bindings to their users.
+    /// The fluent API equivalent to [`Interactivity::on_boxed_action_release`]
+    ///
+    /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
+    fn on_boxed_action_release(
+        mut self,
+        action: &dyn Action,
+        listener: impl Fn(&Box<dyn Action>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.interactivity()
+            .on_boxed_action_release(action, listener);
         self
     }
 
