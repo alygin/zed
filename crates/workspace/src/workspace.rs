@@ -3608,7 +3608,6 @@ impl Workspace {
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
     ) -> &mut Self {
         let callback = Arc::new(callback);
-
         self.workspace_actions.push(Box::new(move |div, cx| {
             let callback = callback.clone();
             div.on_action(
@@ -3618,19 +3617,16 @@ impl Workspace {
         self
     }
 
-    pub fn register_action_with_release<A: Action>(
+    pub fn register_action_release<A: Action>(
         &mut self,
         callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
-        release_callback: impl Fn(&mut Self, &A, &mut ViewContext<Self>) + 'static,
     ) -> &mut Self {
-        self.register_action(callback);
-
-        let release_callback = Arc::new(release_callback);
+        let callback = Arc::new(callback);
         self.workspace_actions.push(Box::new(move |div, cx| {
-            let release_callback = release_callback.clone();
-            div.on_action_release(cx.listener(move |workspace, event, cx| {
-                (release_callback.clone())(workspace, event, cx)
-            }))
+            let callback = callback.clone();
+            div.on_action_release(
+                cx.listener(move |workspace, event, cx| (callback.clone())(workspace, event, cx)),
+            )
         }));
         self
     }
