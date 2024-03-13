@@ -29,13 +29,14 @@ use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 
 use crate::{
-    prelude::*, size, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow, ContentMask,
-    Corners, CursorStyle, DevicePixels, DispatchPhase, DispatchTree, ElementId, ElementStateBox,
-    EntityId, FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyContext, KeyEvent, LayoutId, ModifiersChangedEvent, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
-    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
-    StackingContext, StackingOrder, StrikethroughStyle, Style, TextStyleRefinement, Underline,
+    prelude::*, size, AnyElement, AnyTooltip, AppContext, AvailableSpace, Bounds, BoxShadow,
+    ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase, DispatchTree,
+    DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId, GlobalElementId,
+    GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent, LayoutId,
+    LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad, Path, Pixels,
+    PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    TextStyleRefinement, Underline, UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
